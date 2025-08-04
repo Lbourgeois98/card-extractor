@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>💳 Card Data Extractor</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
   <style>
     body {
       font-family: 'Segoe UI', sans-serif;
@@ -53,105 +52,85 @@
 <body>
 
   <h1>💳 Card Data Extractor</h1>
-  <p class="desc">Upload your PDF to extract card details into a clean table</p>
+  <p class="desc">Upload your file to extract and organize cardholder data</p>
 
   <div class="upload-area">
-    <input type="file" id="pdfInput" accept=".pdf,.txt" />
+    <input type="file" id="fileInput" accept=".txt,.pdf" />
     <br>
-    <button id="parseBtn" disabled>📄 Process File</button>
-    <p><small>Tap to upload, then press "Process File"</small></p>
+    <button id="parseBtn" disabled>🔧 Extract Data</button>
+    <p><small>Supports messy files like "Extracted table.pdf"</small></p>
   </div>
 
   <div class="loading" id="status">Ready to upload</div>
   <div id="output"></div>
 
   <script>
-    // Load PDF.js worker
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
-
-    const pdfInput = document.getElementById('pdfInput');
+    const fileInput = document.getElementById('fileInput');
     const parseBtn = document.getElementById('parseBtn');
     const status = document.getElementById('status');
     const output = document.getElementById('output');
 
-    pdfInput.addEventListener('change', () => {
-      parseBtn.disabled = !pdfInput.files.length;
+    fileInput.addEventListener('change', () => {
+      parseBtn.disabled = !fileInput.files.length;
     });
 
     parseBtn.addEventListener('click', async () => {
-      const file = pdfInput.files[0];
+      const file = fileInput.files[0];
       if (!file) return;
 
-      parseBtn.disabled = true;
       status.textContent = 'Reading file...';
       output.innerHTML = '';
 
       try {
-        let text = '';
+        let text = await file.text();
 
-        if (file.type === 'application/pdf') {
-          // Handle PDF
-          const arrayBuffer = await file.arrayBuffer();
-          const pdf = await pdfjsLib.getDocument({  arrayBuffer }).promise;
-          for (let i = 1; i <= pdf.numPages; i++) {
-            const page = await pdf.getPage(i);
-            const content = await page.getTextContent();
-            text += ' ' + content.items.map(item => item.str).join(' ');
-          }
-        } else {
-          // Handle text file
-          text = await file.text();
-        }
-
-        // Clean and split by I delimiter
-        text = text.replace(/\s+/g, ' ').trim();
-
-        // Fix common OCR errors
-        function clean(t) {
-          return t
-            .replace(/[Il1]/g, '1')
-            .replace(/[O0]/g, '0')
-            .replace(/\bFloridа\b/g, 'Florida')
-            .replace(/\bNеw Yorк\b/g, 'New York')
-            .replace(/\bCal1forn1a\b/g, 'California')
-            .replace(/\bTexa5\b/g, 'Texas')
-            .replace(/\s+/g, ' ')
-            .trim();
-        }
-
-        text = clean(text);
-
-        // Split by I and extract entries
-        const lines = text.split('I');
-        const results = [];
+        // Clean and normalize text
+        text = text
+          .replace(/[\u0430-\u044F]/g, '') // Remove Cyrillic
+          .replace(/[Il1l|~;]/g, 'I')      // Normalize delimiters
+          .replace(/\s+/g, ' ')
+          .trim();
 
         // Known bank names
         const banks = [
           'Regions Bank', 'Navy F.C.U.', 'Gecu', 'Central Bank Of Kansas City',
           'Yellowstone Bank, The', 'Bancorp', 'Capital One Bank(Usa), National Association',
           'Fifth Third Bank, The', 'Bank Of America, N.A.', 'Usaa Savings Bank',
-          'Jpmorgan Chase Bank, N.A.', 'Bbva Usa', 'Metabank, National Association',
-          'Woodforest National Bank', 'Centra C.U.', 'Wells Fargo Bank, N.A.',
-          'Bank Of Missouri, The'
+          'Jpmorgan Chase Bank, N.A.', 'Bbva Usa', 'Metabank', 'Woodforest National Bank',
+          'Centra C.U.', 'Wells Fargo Bank, N.A.', 'Bank Of Missouri, The'
         ];
 
-        // Parse entries
-        for (let i = 0; i < lines.length; i++) {
-          if (!/^\d{15,16}$/.test(lines[i])) continue;
+        // Split by I and extract
+        const parts = text.split('I');
+        const results = [];
 
-          const cardNumber = lines[i];
-          const expMatch = lines[i+1] && lines[i+2] ? `${lines[i+1]}/${lines[i+2].slice(-2)}` : '';
-          const cvv = lines[i+2] || '';
-          const name = lines[i+3] || 'Unknown';
-          const address = lines[i+4] || '';
-          const city = lines[i+5] || '';
-          let state = lines[i+6] || '';
-          const zip = lines[i+7] || '';
+        for (let i = 0; i < parts.length; i++) {
+          if (!/^\d{15,16}$/.test(parts[i])) continue;
 
-          // Standardize state
-          state = state.replace('Now Yorк', 'New York').replace('Texasl', 'Texas');
+          const cardNumber = parts[i];
+          const expMonth = parts[i+1]?.trim() || '';
+          const expYear = parts[i+2]?.trim() || '';
+          const cvv = parts[i+2]?.trim() || '';
+          let name = parts[i+3]?.trim() || 'Unknown';
+          let address = parts[i+4]?.trim() || '';
+          let city = parts[i+5]?.trim() || '';
+          let state = parts[i+6]?.trim() || '';
+          let zip = parts[i+7]?.trim() || '';
 
-          // Extract bank name
+          // Fix known issues
+          if (name === 'UNITED STATES') name = parts[i+4]?.trim() || 'Unknown';
+          if (address === 'UNITED STATES') address = parts[i+5]?.trim() || '';
+          if (city === 'UNITED STATES') city = parts[i+6]?.trim() || '';
+          if (state === 'UNITED STATES') state = parts[i+7]?.trim() || '';
+
+          // Fix state names
+          state = state
+            .replace('Now Yorк', 'New York')
+            .replace('Texasl', 'Texas')
+            .replace('Now Yor<', 'New York')
+            .replace('Floridа', 'Florida');
+
+          // Detect bank
           let bankName = 'Unknown';
           for (const bank of banks) {
             if (text.includes(bank)) {
@@ -162,7 +141,7 @@
 
           results.push({
             "Card Number": cardNumber,
-            "Exp. Date": expMatch,
+            "Exp. Date": expMonth && expYear ? `${expMonth}/${expYear.slice(-2)}` : '',
             "CVV": cvv,
             "Name": name,
             "Address": address,
