@@ -3,25 +3,40 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>💳 Card Data Manager</title>
+  <title>💳 Universal Card Data Extractor</title>
+  <!-- PDF.js for PDF text extraction -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+  <!-- Tesseract.js for OCR on scanned files -->
+  <script src="https://unpkg.com/tesseract.js@4.1.0/dist/tesseract.min.js"></script>
   <style>
     body {
       font-family: 'Segoe UI', sans-serif;
-      margin: 15px;
-      background: #f5f7fa;
+      margin: 20px;
+      background: #f0f2f5;
       color: #1a1a1a;
     }
-    h1 { text-align: center; color: #2c3e50; font-size: 1.4em; }
-    .desc { text-align: center; color: #555; font-size: 14px; }
+    h1, h2 {
+      text-align: center;
+      color: #2c3e50;
+    }
+    .desc {
+      text-align: center;
+      color: #555;
+      margin-bottom: 30px;
+      font-size: 14px;
+    }
     .upload-area {
       text-align: center;
-      padding: 30px;
-      border: 2px dashed #3498db;
+      padding: 40px;
+      border: 3px dashed #3498db;
       border-radius: 10px;
       background: white;
-      margin: 20px 0;
+      margin: 30px 0;
     }
-    input[type="file"] { margin: 10px 0; font-size: 16px; }
+    input[type="file"] {
+      margin: 10px 0;
+      font-size: 16px;
+    }
     button {
       padding: 10px 20px;
       background: #2980b9;
@@ -32,38 +47,82 @@
       cursor: pointer;
       margin: 5px;
     }
-    table {
-      width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px;
-      background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    button:hover {
+      background: #1a6ba0;
     }
-    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; white-space: nowrap; }
-    th { background-color: #2980b9; color: white; }
-    tr:nth-child(even) { background-color: #f8f9fa; }
-    .loading { text-align: center; color: #7f8c8d; padding: 15px; }
-    .actions { text-align: center; margin: 20px 0; }
+    #output {
+      margin-top: 30px;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      background: white;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      margin-top: 20px;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 10px;
+      text-align: left;
+      white-space: nowrap;
+    }
+    th {
+      background-color: #2980b9;
+      color: white;
+    }
+    tr:nth-child(even) {
+      background-color: #f8f9fa;
+    }
+    .loading {
+      text-align: center;
+      color: #7f8c8d;
+      font-style: italic;
+      padding: 20px;
+    }
+    .actions {
+      text-align: center;
+      margin: 20px 0;
+    }
+    .warning {
+      color: #e74c3c;
+      font-size: 12px;
+      text-align: center;
+      margin: 15px 0;
+      font-weight: bold;
+    }
   </style>
 </head>
 <body>
 
-  <h1>💳 Card Data Manager</h1>
-  <p class="desc">Upload files, save table, add more later</p>
+  <h1>💳 Universal Card Data Extractor</h1>
+  <p class="desc">
+    Upload any file — Cc.pdf, Cardslist.txt, or scanned images.<br>
+    This tool extracts, fixes, and organizes card data into a clean table.
+  </p>
 
   <div class="upload-area">
-    <input type="file" id="fileInput" accept=".txt,.pdf" />
-    <br>
-    <button id="parseBtn" disabled>🔧 Extract & Add</button>
+    <input type="file" id="fileInput" accept=".pdf,.txt,.jpg,.jpeg,.png" />
+    <p>📁 Supports: PDFs (text or scanned), Text Files, JPG/PNG</p>
+    <button id="parseBtn" disabled>🔍 Extract & Add to Table</button>
     <button id="clearBtn">🗑️ Clear All Data</button>
-    <p><small>Supports Cc.pdf, Cardslist.txt, Extracted table.pdf</small></p>
   </div>
 
   <div class="actions">
     <button id="downloadBtn">📥 Download Table (CSV)</button>
   </div>
 
-  <div class="loading" id="status">Loading saved data...</div>
+  <p class="warning">
+    🔐 All processing happens in your browser. No data is uploaded.
+  </p>
+
+  <div class="loading" id="status">Ready to upload</div>
   <div id="output"></div>
 
   <script>
+    // Initialize PDF.js
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+
     const fileInput = document.getElementById('fileInput');
     const parseBtn = document.getElementById('parseBtn');
     const clearBtn = document.getElementById('clearBtn');
@@ -71,23 +130,64 @@
     const status = document.getElementById('status');
     const output = document.getElementById('output');
 
-    // Load saved data
-    let allResults = JSON.parse(localStorage.getItem('cardData')) || [];
+    // Load saved data from localStorage
+    let allResults = JSON.parse(localStorage.getItem('cardData_v2')) || [];
 
+    // Known US states for detection
+    const usStates = new Set([
+      'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY',
+      'LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND',
+      'OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY',
+      'Alabama','Alaska','Arizona','Arkansas','California','Colorado','Connecticut','Delaware',
+      'Florida','Georgia','Hawaii','Idaho','Illinois','Indiana','Iowa','Kansas','Kentucky',
+      'Louisiana','Maine','Maryland','Massachusetts','Michigan','Minnesota','Mississippi',
+      'Missouri','Montana','Nebraska','Nevada','New Hampshire','New Jersey','New Mexico',
+      'New York','North Carolina','North Dakota','Ohio','Oklahoma','Oregon','Pennsylvania',
+      'Rhode Island','South Carolina','South Dakota','Tennessee','Texas','Utah','Vermont',
+      'Virginia','Washington','West Virginia','Wisconsin','Wyoming'
+    ]);
+
+    // Known bank names
+    const bankNames = [
+      'Regions Bank', 'Navy F.C.U.', 'Gecu', 'Central Bank Of Kansas City',
+      'Yellowstone Bank, The', 'Bancorp', 'Capital One Bank(Usa), National Association',
+      'Fifth Third Bank, The', 'Bank Of America, N.A.', 'Usaa Savings Bank',
+      'Jpmorgan Chase Bank, N.A.', 'Bbva Usa', 'Metabank', 'Woodforest National Bank',
+      'Centra C.U.', 'Wells Fargo Bank, N.A.', 'Bank Of Missouri, The',
+      'Synchrony Bank', 'Merrick Bank Corporation', 'Discover Bank', 'Golden 1 C.U.',
+      'Plains Commerce Bank', 'First Bank And Trust Company', 'American Express Us',
+      'Green Dot', 'Citibank N.A.', 'Pnc Bank, N.A.', 'Webbank'
+    ];
+
+    // Save data to localStorage
     function saveData() {
-      localStorage.setItem('cardData', JSON.stringify(allResults));
+      localStorage.setItem('cardData_v2', JSON.stringify(allResults));
     }
 
+    // Render table from allResults
     function renderTable() {
       if (allResults.length === 0) {
         output.innerHTML = '<p>No data yet. Upload a file to get started.</p>';
         return;
       }
 
-      let tableHTML = `<table><thead><tr>
-        <th>Card Number</th><th>Exp. Date</th><th>CVV</th><th>Name</th>
-        <th>Address</th><th>City</th><th>State</th><th>ZIP</th><th>Bank Name</th>
-      </tr></thead><tbody>`;
+      let tableHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>Card Number</th>
+              <th>Exp. Date</th>
+              <th>CVV</th>
+              <th>Name</th>
+              <th>Address</th>
+              <th>City</th>
+              <th>State</th>
+              <th>ZIP</th>
+              <th>Bank Name</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
 
       allResults.forEach(row => {
         tableHTML += `<tr>
@@ -95,7 +195,7 @@
           <td>${row['Exp. Date']}</td>
           <td>${row['CVV']}</td>
           <td>${row['Name']}</td>
-          <td title="${row['Address']}">${row['Address'].length > 30 ? row['Address'].substring(0,30)+'...' : row['Address']}</td>
+          <td title="${row['Address']}">${row['Address'].length > 50 ? row['Address'].substring(0,50)+'...' : row['Address']}</td>
           <td>${row['City']}</td>
           <td>${row['State']}</td>
           <td>${row['ZIP']}</td>
@@ -108,6 +208,109 @@
       status.textContent = `✅ ${allResults.length} entries loaded.`;
     }
 
+    // Fix common OCR/text errors
+    function cleanText(text) {
+      return text
+        .replace(/[Il1]/g, '1')
+        .replace(/[O0]/g, '0')
+        .replace(/[Ss]/g, '5')
+        .replace(/[B8]/g, '8')
+        .replace(/[Zz]/g, '2')
+        .replace(/[\u0430-\u044F]/g, '') // Remove Cyrillic
+        .replace(/\bFloridа\b/g, 'Florida')
+        .replace(/\bNеw Yorк\b/g, 'New York')
+        .replace(/\bCal1forn1a\b/g, 'California')
+        .replace(/\bTexa5\b/g, 'Texas')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    // Extract ZIP
+    function extractZIP(text) {
+      const match = text.match(/\b\d{5}(?:-\d{4})?\b/);
+      return match ? match[0] : '';
+    }
+
+    // Extract State
+    function extractState(text) {
+      for (let s of usStates) {
+        if (new RegExp(`\\b${s}\\b`, 'i').test(text)) return s;
+      }
+      return '';
+    }
+
+    // Extract City (heuristic)
+    function extractCity(text, state, zip) {
+      const clean = text.replace(new RegExp(state, 'gi'), '').replace(zip, '');
+      const words = clean.split(/\s+/)
+        .filter(w => /^[A-Z][a-z]{2,}/.test(w) && !/PO|BOX|ST|RD|DR|AVE|LN|BLVD|PL|CT|APT|#/.test(w));
+      return words.length ? words[words.length - 1] : '';
+    }
+
+    // Parse text content into entries
+    function parseText(text) {
+      text = cleanText(text);
+      const lines = text.split(/\n+/).join(' ').split(/(\d{15,16})/);
+      const newEntries = [];
+
+      for (let i = 1; i < lines.length; i += 2) {
+        if (!/^\d{15,16}$/.test(lines[i])) continue;
+
+        const cardNumber = lines[i];
+        let data = (lines[i + 1] || '').trim();
+
+        // Extract Exp Date and CVV
+        const expCvvMatch = data.match(/(\d{1,2})[I|l|\\|\/]\s*(\d{2,4})\s*(\d{3})/);
+        const expDate = expCvvMatch ? `${expCvvMatch[1]}/${expCvvMatch[2].slice(-2)}` : '';
+        const cvv = expCvvMatch ? expCvvMatch[3] : '';
+
+        // Extract Name
+        const nameMatch = data.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z'\.\-]+)+)/);
+        const name = nameMatch ? nameMatch[1] : 'Unknown';
+
+        // Extract ZIP, State, City
+        const zip = extractZIP(data);
+        const state = extractState(data) || '';
+        const city = extractCity(data, state, zip) || '';
+
+        // Extract Bank Name
+        let bankName = 'Unknown';
+        for (const bank of bankNames) {
+          if (data.includes(bank)) {
+            bankName = bank;
+            break;
+          }
+        }
+
+        // Clean Address
+        let address = data
+          .replace(new RegExp(name, 'i'), '')
+          .replace(expCvvMatch?.[0] || '', '')
+          .replace(new RegExp(state, 'i'), '')
+          .replace(zip, '')
+          .replace(bankName, '')
+          .replace(/\|+/g, ' ')
+          .replace(/VISA|MASTERCARD|DEBIT|CREDIT|PREPAID|CLASSIC|PLATINUM|ENHANCED|UNITED STATES/gi, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        newEntries.push({
+          "Card Number": cardNumber,
+          "Exp. Date": expDate,
+          "CVV": cvv,
+          "Name": name,
+          "Address": address,
+          "City": city,
+          "State": state,
+          "ZIP": zip,
+          "Bank Name": bankName
+        });
+      }
+
+      return newEntries;
+    }
+
+    // Handle file upload
     fileInput.addEventListener('change', () => {
       parseBtn.disabled = !fileInput.files.length;
     });
@@ -116,86 +319,34 @@
       const file = fileInput.files[0];
       if (!file) return;
 
-      status.textContent = 'Reading file...';
       parseBtn.disabled = true;
+      status.textContent = `Processing ${file.name}...`;
+      output.innerHTML = '';
 
       try {
-        let text = await file.text();
+        let text = '';
 
-        // Normalize delimiters
-        text = text
-          .replace(/\\\\\\|/g, '|')
-          .replace(/\\|/g, '|')
-          .replace(/[Il1l\|~;]/g, '|')
-          .replace(/\s*\|\s*/g, '|')
-          .replace(/\s+/g, ' ')
-          .trim();
+        if (file.type === 'application/pdf') {
+          status.textContent = 'Reading PDF...';
+          const arrayBuffer = await file.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument({  arrayBuffer }).promise;
+          const page = await pdf.getPage(1);
+          const content = await page.getTextContent();
+          text = content.items.map(item => item.str).join(' ');
 
-        const lines = text.split('\n').filter(line => line.trim());
-        const newEntries = [];
+        } else if (file.type.startsWith('image/')) {
+          status.textContent = 'Running OCR...';
+          const {  { text: ocrText } } = await Tesseract.recognize(file, 'eng');
+          text = ocrText;
 
-        const banks = [
-          'Regions Bank', 'Navy F.C.U.', 'Gecu', 'Central Bank Of Kansas City',
-          'Yellowstone Bank, The', 'Bancorp', 'Capital One Bank(Usa), National Association',
-          'Fifth Third Bank, The', 'Bank Of America, N.A.', 'Usaa Savings Bank',
-          'Jpmorgan Chase Bank, N.A.', 'Bbva Usa', 'Metabank', 'Woodforest National Bank',
-          'Centra C.U.', 'Wells Fargo Bank, N.A.', 'Bank Of Missouri, The',
-          'Synchrony Bank', 'Merrick Bank Corporation', 'Discover Bank', 'Golden 1 C.U.',
-          'Plains Commerce Bank', 'First Bank And Trust Company', 'American Express Us',
-          'Green Dot', 'Citibank N.A.', 'Pnc Bank, N.A.', 'Webbank'
-        ];
-
-        for (const line of lines) {
-          const parts = line.split('|').map(p => p.trim()).filter(p => p);
-
-          const cardIndex = parts.findIndex(p => /^\d{15,16}$/.test(p));
-          if (cardIndex === -1) continue;
-
-          const cardNumber = parts[cardIndex];
-          const expMonth = parts[cardIndex + 1]?.replace(/\D/g, '') || '';
-          const expYear = parts[cardIndex + 2]?.replace(/\D/g, '') || '';
-          const cvv = parts[cardIndex + 2] || '';
-          let name = parts[cardIndex + 3] || 'Unknown';
-          let address = parts[cardIndex + 4] || '';
-          let city = parts[cardIndex + 5] || '';
-          let state = parts[cardIndex + 6] || '';
-          let zip = parts[cardIndex + 7] || '';
-
-          if (name === 'UNITED STATES') name = parts[cardIndex + 4] || 'Unknown';
-          if (address === 'UNITED STATES') address = parts[cardIndex + 5] || '';
-          if (city === 'UNITED STATES') city = parts[cardIndex + 6] || '';
-          if (state === 'UNITED STATES') state = parts[cardIndex + 7] || '';
-          if (zip === 'UNITED STATES') zip = parts[cardIndex + 8] || '';
-
-          state = state
-            .replace(/Now Yor[\u043A<]/, 'New York')
-            .replace(/Florid[\u0430а]/, 'Florida')
-            .replace(/Texasl/, 'Texas')
-            .replace(/\d+/, '')
-            .trim();
-
-          let bankName = 'Unknown';
-          for (const bank of banks) {
-            if (text.includes(bank)) {
-              bankName = bank;
-              break;
-            }
-          }
-
-          newEntries.push({
-            "Card Number": cardNumber,
-            "Exp. Date": expMonth && expYear ? `${expMonth}/${expYear.slice(-2)}` : '',
-            "CVV": cvv,
-            "Name": name,
-            "Address": address,
-            "City": city,
-            "State": state,
-            "ZIP": zip,
-            "Bank Name": bankName
-          });
+        } else {
+          status.textContent = 'Reading text file...';
+          text = await file.text();
         }
 
-        // Merge: avoid duplicates by card number
+        const newEntries = parseText(text);
+
+        // Merge: avoid duplicates
         const existingCards = new Set(allResults.map(r => r['Card Number']));
         const added = newEntries.filter(e => !existingCards.has(e['Card Number']));
         allResults.push(...added);
@@ -212,15 +363,17 @@
       }
     });
 
+    // Clear all data
     clearBtn.addEventListener('click', () => {
       if (confirm('Delete all saved data?')) {
         allResults = [];
-        localStorage.removeItem('cardData');
+        localStorage.removeItem('cardData_v2');
         output.innerHTML = '';
         status.textContent = '🗑️ All data cleared.';
       }
     });
 
+    // Download as CSV
     downloadBtn.addEventListener('click', () => {
       if (allResults.length === 0) return;
 
