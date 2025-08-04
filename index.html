@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>💳 Card Data Extractor</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      margin: 15px;
+      background: #f5f7fa;
+      color: #1a1a1a;
+    }
+    h1 { text-align: center; color: #2c3e50; font-size: 1.4em; }
+    .desc { text-align: center; color: #555; font-size: 14px; }
+    .upload-area {
+      text-align: center;
+      padding: 30px;
+      border: 2px dashed #3498db;
+      border-radius: 10px;
+      background: white;
+      margin: 20px 0;
+    }
+    input[type="file"] { margin: 10px 0; font-size: 16px; }
+    button {
+      padding: 10px 20px;
+      background: #2980b9;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    table {
+      width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px;
+      background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; white-space: nowrap; }
+    th { background-color: #2980b9; color: white; }
+    tr:nth-child(even) { background-color: #f8f9fa; }
+    .loading { text-align: center; color: #7f8c8d; padding: 15px; }
+  </style>
+</head>
+<body>
+
+  <h1>💳 Card Data Extractor</h1>
+  <p class="desc">Upload your PDF to extract card details into a clean table</p>
+
+  <div class="upload-area">
+    <input type="file" id="pdfInput" accept=".pdf" />
+    <br>
+    <button id="parseBtn" disabled>📄 Process PDF</button>
+    <p><small>Tap to upload, then press "Process PDF"</small></p>
+  </div>
+
+  <div class="loading" id="status">Ready to upload</div>
+  <div id="output"></div>
+
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+
+    const pdfInput = document.getElementById('pdfInput');
+    const parseBtn = document.getElementById('parseBtn');
+    const status = document.getElementById('status');
+    const output = document.getElementById('output');
+
+    pdfInput.addEventListener('change', () => {
+      parseBtn.disabled = !pdfInput.files.length;
+    });
+
+    parseBtn.addEventListener('click', async () => {
+      const file = pdfInput.files[0];
+      if (!file) return;
+
+      parseBtn.disabled = true;
+      status.textContent = 'Reading PDF...';
+      output.innerHTML = '';
+
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({  arrayBuffer }).promise;
+        let fullText = '';
+
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          fullText += ' ' + content.items.map(item => item.str).join(' ');
+        }
+
+        fullText = fullText.replace(/\s+/g, ' ').trim();
+
+        // Clean OCR errors
+        function clean(text) {
+          return text
+            .replace(/[Il1]/g, '1')
+            .replace(/[O0]/g, '0')
+            .replace(/\bFloridа\b/g, 'Florida')
+            .replace(/\bNеw Yorк\b/g, 'New York')
+            .replace(/\s+/g, ' ')
+            .trim();
+        }
+
+        fullText = clean(fullText);
+
+        const entries = [];
+        const lines = fullText.split(/(\d{15,16})/);
+
+        for (let i = 1; i < lines.length; i += 2) {
+          if (!lines[i] || !lines[i + 1]) continue;
+
+          const cardNumber = lines[i];
+          let data = lines[i + 1].trim();
+
+          const expCvvMatch = data.match(/(\d{1,2})[I|l|\\|\/]\s*(\d{2,4})\s*(\d{3})/);
+          const expDate = expCvvMatch ? `${expCvvMatch[1]}/${expCvvMatch[2].slice(-2)}` : '';
+          const cvv = expCvvMatch ? expCvvMatch[3] : '';
+
+          const nameMatch = data.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z'\.\-]+)+)/);
+          const name = nameMatch ? nameMatch[1] : 'Unknown';
+
+          const zipMatch = data.match(/\b\d{5}(?:-\d{4})?\b/);
+          const zip = zipMatch ? zipMatch[0] : '';
+
+          const stateMatch = data.match(/\b(AZ|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|[A-Z][a-z]+(?: [A-Z][a-z]+)*)\b/);
+          const state = stateMatch ? stateMatch[0] : '';
+
+          const bankMatch = data.match(/(Regions Bank|Navy F\.C\.U\.|Gecu|Bank Of America|Wells Fargo|Capital One|Fifth Third|Jpmorgan|Bancorp)/);
+          const bankName = bankMatch ? bankMatch[0] : 'Unknown';
+
+          let address = data
+            .replace(name, '')
+            .replace(expCvvMatch?.[0] || '', '')
+            .replace(new RegExp(state, 'g'), '')
+            .replace(zip, '')
+            .replace(bankName, '')
+            .replace(/\|+/g, ' ')
+            .replace(/VISA|MASTERCARD|DEBIT|CREDIT|PREPAID|UNITED STATES/g, '')
+            .trim();
+
+          entries.push({
+            "Card Number": cardNumber,
+            "Exp. Date": expDate,
+            "CVV": cvv,
+            "Name": name,
+            "Address": address,
+            "City": "—",
+            "State": state,
+            "ZIP": zip,
+            "Bank Name": bankName
+          });
+        }
+
+        let tableHTML = `<table><thead><tr>
+          <th>Card Number</th><th>Exp. Date</th><th>CVV</th><th>Name</th>
+          <th>Address</th><th>City</th><th>State</th><th>ZIP</th><th>Bank Name</th>
+        </tr></thead><tbody>`;
+
+        entries.forEach(row => {
+          tableHTML += `<tr>
+            <td>${row['Card Number']}</td>
+            <td>${row['Exp. Date']}</td>
+            <td>${row['CVV']}</td>
+            <td>${row['Name']}</td>
+            <td title="${row['Address']}">${row['Address'].length > 30 ? row['Address'].substring(0,30)+'...' : row['Address']}</td>
+            <td>${row['City']}</td>
+            <td>${row['State']}</td>
+            <td>${row['ZIP']}</td>
+            <td>${row['Bank Name']}</td>
+          </tr>`;
+        });
+
+        tableHTML += `</tbody></table>`;
+        output.innerHTML = tableHTML;
+        status.textContent = `✅ Done! Found ${entries.length} entries.`;
+
+      } catch (err) {
+        status.textContent = `❌ Error: ${err.message}`;
+        console.error(err);
+      }
+    });
+  </script>
+</body>
+</html>
